@@ -1,0 +1,24 @@
+name: 'CodeGov PR Scan'
+description: 'Detect AI-authored commits in your pull requests and post a provenance summary as a PR comment.'
+branding:
+  icon: 'shield'
+  color: 'orange'
+
+inputs:
+  token:
+    description: 'GitHub token for posting PR comments'
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Scan PR for AI-authored commits
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: node "${{ github.action_path }}/scan-pr.js"
