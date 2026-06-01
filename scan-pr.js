@@ -132,10 +132,13 @@ function detectGenericAI(c) {
   if (bots.some(b => text.toLowerCase().includes(b))) {
     return { matched: false, agentId: "unknown-ai", confidence: 0, modelVersion: null, signals: [] };
   }
-  if (text.match(/Co-[Aa]uthored-[Bb]y:.*(ai|assistant|agent|llm)/i)) {
+  // Word boundaries + same-line only. Without \b the alternation matched
+  // substrings inside ordinary text — "ai" inside "gm[ai]l.com", "Cl[ai]re" —
+  // flagging human commits as AI.
+  if (text.match(/Co-[Aa]uthored-[Bb]y:[^\n]*\b(?:ai|assistant|agent|llm)\b/i)) {
     signals.push("generic-ai-co-author"); confidence = 0.6;
   }
-  if (c.body.match(/generated\s+(by|with|using)\s+(an?\s+)?(ai|llm|assistant|agent)/i)) {
+  if (c.body.match(/generated\s+(?:by|with|using)\s+(?:an?\s+)?\b(?:ai|llm|assistant|agent)\b/i)) {
     signals.push("ai-generation-mention-in-body"); confidence = Math.max(confidence, 0.5);
   }
 
@@ -206,8 +209,13 @@ const AGENT_LABELS = {
   "unknown-ai": "Unknown AI",
 };
 
+// Count only the five branded tools (each matched on a specific signature).
+// The generic "unknown-ai" heuristic is excluded from PR counts to avoid false
+// positives (e.g. a human co-author on a gmail address).
+const BRANDED = new Set(["claude-code", "cursor", "copilot", "devin", "aider"]);
+
 function formatComment(commits, results) {
-  const aiResults = results.filter(r => r.confidence > 0.3);
+  const aiResults = results.filter(r => r.confidence > 0.3 && BRANDED.has(r.agentId));
   const total = commits.length;
   const aiCount = aiResults.length;
 
@@ -302,6 +310,13 @@ async function main() {
     process.exit(1);
   }
 
+  // baseSha/headSha are interpolated into a shell command below — require hex SHAs.
+  const shaRe = /^[0-9a-fA-F]{7,64}$/;
+  if (!shaRe.test(baseSha) || !shaRe.test(headSha)) {
+    console.error("BASE_SHA and HEAD_SHA must be hex commit SHAs.");
+    process.exit(1);
+  }
+
   console.log(`Scanning commits ${baseSha.slice(0, 7)}..${headSha.slice(0, 7)}`);
 
   const commits = getCommitsInRange(baseSha, headSha);
@@ -312,7 +327,7 @@ async function main() {
     return { ...d, hash: c.hash, linesAdded: c.linesAdded, linesRemoved: c.linesRemoved };
   });
 
-  const aiCount = results.filter(r => r.confidence > 0.3).length;
+  const aiCount = results.filter(r => r.confidence > 0.3 && BRANDED.has(r.agentId)).length;
   console.log(`Detected ${aiCount} AI-authored commits`);
 
   const comment = formatComment(commits, results);
