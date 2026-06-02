@@ -13,6 +13,13 @@ function detectAgent(commit) {
     detectCopilot,
     detectDevin,
     detectAider,
+    detectCodex,
+    detectGemini,
+    detectJules,
+    detectOpenHands,
+    detectSweep,
+    detectJetBrains,
+    detectAugment,
     detectGenericAI,
   ];
 
@@ -102,6 +109,9 @@ function detectDevin(c) {
   if (c.email.includes("devin-ai-integration[bot]")) {
     signals.push("devin-bot-author"); confidence = 0.95;
   }
+  if (c.email === "bot@devin.ai" || c.email.includes("bot@devin.ai")) {
+    signals.push("devin-bot-email"); confidence = Math.max(confidence, 0.95);
+  }
   if (c.author === "Devin AI") {
     signals.push("devin-author-name"); confidence = Math.max(confidence, 0.95);
   }
@@ -115,12 +125,72 @@ function detectAider(c) {
   let modelVersion = null;
   const text = c.trailers + "\n" + c.body;
 
-  const m = text.match(/Co-[Aa]uthored-[Bb]y:\s*aider\s*\(([^)]+)\)\s*<aider@aider\.chat>/i);
+  const m = text.match(/Co-[Aa]uthored-[Bb]y:\s*aider\s*\(([^)]+)\)\s*<(?:aider|noreply)@aider\.chat>/i);
   if (m) { signals.push("aider-co-authored-trailer"); confidence = 0.95; modelVersion = m[1].trim(); }
-  if (!m && text.includes("aider@aider.chat")) { signals.push("aider-email"); confidence = Math.max(confidence, 0.85); }
+  if (!m && (text.includes("aider@aider.chat") || text.includes("noreply@aider.chat"))) { signals.push("aider-email"); confidence = Math.max(confidence, 0.85); }
   if (c.message.match(/^aider:/i)) { signals.push("aider-message-prefix"); confidence = Math.max(confidence, 0.9); }
 
   return { matched: signals.length > 0, agentId: "aider", confidence, modelVersion, signals };
+}
+
+// Newer tools — verified bot logins / dedicated co-author emails (see CLI engine).
+function detectCodex(c) {
+  const signals = [];
+  let confidence = 0;
+  const text = c.trailers + "\n" + c.body;
+
+  if (text.match(/Co-[Aa]uthored-[Bb]y:\s*Codex\s*<noreply@openai\.com>/i)) {
+    signals.push("codex-co-author-trailer"); confidence = 0.95;
+  }
+  if (c.email.includes("codex[bot]") || c.author === "codex[bot]" || c.author === "openai-codex[bot]") {
+    signals.push("codex-bot-author"); confidence = Math.max(confidence, 0.95);
+  }
+  return { matched: signals.length > 0, agentId: "codex", confidence, modelVersion: null, signals };
+}
+
+function detectGemini(c) {
+  const signals = [];
+  let confidence = 0;
+  const text = c.trailers + "\n" + c.body + "\n" + c.email;
+
+  if (text.includes("gemini-cli@users.noreply.github.com")) {
+    signals.push("gemini-cli-co-author"); confidence = 0.95;
+  }
+  return { matched: signals.length > 0, agentId: "gemini", confidence, modelVersion: null, signals };
+}
+
+function detectJules(c) {
+  const matched = c.author === "google-labs-jules[bot]" || c.email.includes("google-labs-jules[bot]");
+  return { matched, agentId: "jules", confidence: matched ? 0.95 : 0, modelVersion: null, signals: matched ? ["jules-bot-author"] : [] };
+}
+
+function detectOpenHands(c) {
+  const signals = [];
+  let confidence = 0;
+  const text = c.trailers + "\n" + c.body;
+
+  if (c.author === "openhands-agent" || c.email.includes("openhands-agent")) {
+    signals.push("openhands-agent-author"); confidence = 0.95;
+  }
+  if (text.match(/Co-[Aa]uthored-[Bb]y:[^\n]*openhands@all-hands\.dev/i)) {
+    signals.push("openhands-co-author"); confidence = Math.max(confidence, 0.9);
+  }
+  return { matched: signals.length > 0, agentId: "openhands", confidence, modelVersion: null, signals };
+}
+
+function detectSweep(c) {
+  const matched = ["sweep-ai-deprecated[bot]", "sweep-nightly[bot]"].some(l => c.author === l || c.email.includes(l));
+  return { matched, agentId: "sweep", confidence: matched ? 0.95 : 0, modelVersion: null, signals: matched ? ["sweep-bot-author"] : [] };
+}
+
+function detectJetBrains(c) {
+  const matched = c.author === "jetbrains-junie[bot]" || c.email.includes("jetbrains-junie[bot]");
+  return { matched, agentId: "jetbrains", confidence: matched ? 0.95 : 0, modelVersion: null, signals: matched ? ["jetbrains-junie-bot-author"] : [] };
+}
+
+function detectAugment(c) {
+  const matched = c.author === "augmentcode[bot]" || c.email.includes("augmentcode[bot]");
+  return { matched, agentId: "augment", confidence: matched ? 0.95 : 0, modelVersion: null, signals: matched ? ["augment-bot-author"] : [] };
 }
 
 function detectGenericAI(c) {
@@ -206,13 +276,23 @@ const AGENT_LABELS = {
   "copilot": "GitHub Copilot",
   "devin": "Devin",
   "aider": "Aider",
+  "codex": "OpenAI Codex",
+  "gemini": "Gemini CLI",
+  "jules": "Google Jules",
+  "openhands": "OpenHands",
+  "sweep": "Sweep",
+  "jetbrains": "JetBrains Junie",
+  "augment": "Augment",
   "unknown-ai": "Unknown AI",
 };
 
-// Count only the five branded tools (each matched on a specific signature).
+// Count only branded tools (each matched on a specific, verified signature).
 // The generic "unknown-ai" heuristic is excluded from PR counts to avoid false
 // positives (e.g. a human co-author on a gmail address).
-const BRANDED = new Set(["claude-code", "cursor", "copilot", "devin", "aider"]);
+const BRANDED = new Set([
+  "claude-code", "cursor", "copilot", "devin", "aider",
+  "codex", "gemini", "jules", "openhands", "sweep", "jetbrains", "augment",
+]);
 
 function formatComment(commits, results) {
   const aiResults = results.filter(r => r.confidence > 0.3 && BRANDED.has(r.agentId));
